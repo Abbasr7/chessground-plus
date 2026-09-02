@@ -75,6 +75,8 @@ export interface MoveMetadata {
 }
 export interface SetPremoveMetadata {
   ctrlKey?: boolean;
+  /** Force a new queue step even when the piece is dragged from its premove destination. */
+  append?: boolean;
 }
 
 export type MouchEvent = Event & Partial<MouseEvent & TouchEvent>;

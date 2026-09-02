@@ -1,4 +1,6 @@
-import { premove, premovePieces } from './premove.js';
+import { premove, premovePieces, visiblePieces } from './premove.js';
+
+export { visiblePieces } from './premove.js';
 import { type HeadlessState } from './state.js';
 import type * as cg from './types.js';
 import {
@@ -20,6 +22,18 @@ export function callUserFunction<T extends (...args: any[]) => void>(
 ): void {
   if (f) setTimeout(() => f(...args), 1);
 }
+
+/** True while the user is allowed to premove rather than move. */
+export const isPremovePhase = (state: HeadlessState): boolean =>
+  !!state.movable.color && state.turnColor !== state.movable.color;
+
+/**
+ * The piece shown to the user on `key`. During premove phase this includes the
+ * virtual premove overlay (pieces at their queued destinations); during the
+ * user's real turn it returns the actual board piece.
+ */
+export const pieceAt = (state: HeadlessState, key: cg.Key): cg.Piece | undefined =>
+  (isPremovePhase(state) ? visiblePieces(state) : state.pieces).get(key);
 
 export function toggleOrientation(state: HeadlessState): void {
   state.orientation = opposite(state.orientation);
@@ -53,29 +67,62 @@ export function setCheck(state: HeadlessState, color: cg.Color | boolean): void 
 
 function setPremove(state: HeadlessState, orig: cg.Key, dest: cg.Key, meta: cg.SetPremoveMetadata): void {
   unsetPredrop(state);
-  if (state.premovable.multiple) addToPremoveQueue(state, orig, dest);
-  else {
-    state.premovable.current = [orig, dest];
+  if (state.premovable.multiple) {
+    const added = addToPremoveQueue(state, orig, dest, !!meta.append);
+    callUserFunction(state.premovable.events.set, added ? added.orig : orig, added ? added.dest : dest, meta);
+  } else {
+    const current = state.premovable.current;
+    // Plain re-drag from the displayed destination reroutes the current premove:
+    // e.g. e2→e4, then dragging the pawn from e4 to e5 becomes e2→e5.
+    const rerouteOrig = current && current[1] === orig ? current[0] : undefined;
+    const setOrig = rerouteOrig ?? orig;
+    state.premovable.current = [setOrig, dest];
     state.premovable.queue = [];
+    callUserFunction(state.premovable.events.set, setOrig, dest, meta);
   }
-  callUserFunction(state.premovable.events.set, orig, dest, meta);
 }
 
-function addToPremoveQueue(state: HeadlessState, orig: cg.Key, dest: cg.Key): void {
+function lastQueuedDestIndex(queue: cg.Premove[], key: cg.Key): number {
+  for (let i = queue.length - 1; i >= 0; i--) if (queue[i].dest === key) return i;
+  return -1;
+}
+
+function addToPremoveQueue(
+  state: HeadlessState,
+  orig: cg.Key,
+  dest: cg.Key,
+  append: boolean,
+): cg.Premove | undefined {
   const queue = state.premovable.queue;
-  // Re-queueing a move that starts from an origin already used by an earlier
-  // queued item invalidates that item and everything queued after it (they were
-  // computed on a board where that piece was elsewhere), so truncate from there.
-  const idx = queue.findIndex(item => item.orig === orig);
+  const byOrigin = queue.findIndex(item => item.orig === orig);
+  const byDest = lastQueuedDestIndex(queue, orig);
+  let idx = -1;
+  let rerouteOrig: cg.Key | undefined;
+  if (append) {
+    // Ctrl/Shift-drag explicitly starts a new chain step from `orig`: replace
+    // an existing item that starts here (and the chain after it), or append.
+    idx = byOrigin;
+  } else if (state.premovable.rerouteOnDrag && byDest !== -1) {
+    // Plain re-drag from a queued destination reroutes the move that put the
+    // piece there (chess.com-style drag-to-reroute).
+    idx = byDest;
+    rerouteOrig = queue[byDest].orig;
+  } else {
+    idx = byOrigin;
+  }
+  // Re-queueing from an origin already used (or rerouting a queued destination)
+  // invalidates that item and everything queued after it, so truncate from there.
   if (idx !== -1) queue.length = idx;
   // Respect the maximum queue length.
   if (queue.length >= state.premovable.maxQueueLength) {
     syncCurrentFromQueue(state);
-    return;
+    return undefined;
   }
-  queue.push({ orig, dest });
+  const item = rerouteOrig ? { orig: rerouteOrig, dest } : { orig, dest };
+  queue.push(item);
   syncCurrentFromQueue(state);
   callUserFunction(state.premovable.events.queueSet, state.premovable.queue);
+  return item;
 }
 
 function syncCurrentFromQueue(state: HeadlessState): void {
@@ -246,6 +293,7 @@ export function userMove(state: HeadlessState, orig: cg.Key, dest: cg.Key): bool
   } else if (canPremove(state, orig, dest)) {
     setPremove(state, orig, dest, {
       ctrlKey: state.stats.ctrlKey,
+      append: state.stats.ctrlKey || state.stats.shiftKey,
     });
     unselect(state);
     return true;
@@ -273,17 +321,17 @@ export function dropNewPiece(state: HeadlessState, orig: cg.Key, dest: cg.Key, f
   unselect(state);
 }
 
-export function selectSquare(state: HeadlessState, key: cg.Key, force?: boolean): void {
+export function selectSquare(state: HeadlessState, key: cg.Key, force?: boolean): boolean {
   callUserFunction(state.events.select, key);
   if (state.selected) {
     if (state.selected === key && !state.draggable.enabled) {
       unselect(state);
       state.hold.cancel();
-      return;
+      return false;
     } else if ((state.selectable.enabled || force) && state.selected !== key) {
       if (userMove(state, state.selected, key)) {
         state.stats.dragged = false;
-        return;
+        return true;
       }
     }
   }
@@ -294,6 +342,7 @@ export function selectSquare(state: HeadlessState, key: cg.Key, force?: boolean)
     setSelected(state, key);
     state.hold.start();
   }
+  return false;
 }
 
 export function setSelected(state: HeadlessState, key: cg.Key): void {
@@ -365,7 +414,7 @@ function canPredrop(state: HeadlessState, orig: cg.Key, dest: cg.Key): boolean {
 }
 
 export function isDraggable(state: HeadlessState, orig: cg.Key): boolean {
-  const piece = state.pieces.get(orig);
+  const piece = pieceAt(state, orig);
   return (
     !!piece &&
     state.draggable.enabled &&

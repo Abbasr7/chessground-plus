@@ -56,6 +56,8 @@ export interface HeadlessState {
     multiple: boolean; // allow a queue of several premoves (chess.com-style chain)
     maxQueueLength: number; // maximum number of premoves that can be queued
     queue: cg.Premove[]; // the queued premoves, applied in order
+    showMovedPieces: boolean; // render premove pieces at their queued destinations (chess.com-style)
+    rerouteOnDrag: boolean; // re-dragging a piece from a premove destination edits that premove
     additionalPremoveRequirements: cg.Mobility;
     events: {
       set?: (orig: cg.Key, dest: cg.Key, metadata?: cg.SetPremoveMetadata) => void; // called after the premove has been set
@@ -97,6 +99,7 @@ export interface HeadlessState {
     // needs default to false for touch
     dragged: boolean;
     ctrlKey?: boolean;
+    shiftKey?: boolean;
   };
   events: {
     change?: () => void; // called after the situation changes on the board
@@ -155,6 +158,8 @@ export function defaults(): HeadlessState {
       multiple: false,
       maxQueueLength: 5,
       queue: [],
+      showMovedPieces: true,
+      rerouteOnDrag: true,
       additionalPremoveRequirements: _ => true,
       events: {},
     },

@@ -46,23 +46,85 @@ export function applyMoveToPieces(pieces: cg.Pieces, orig: cg.Key, dest: cg.Key)
 }
 
 /**
+ * The ordered premove list used by the current mode:
+ * - `multiple` mode uses the queue.
+ * - single mode mirrors the single `current` as a one-element list.
+ */
+export function premoveItems(state: HeadlessState): cg.Premove[] {
+  if (state.premovable.multiple) return state.premovable.queue;
+  const cur = state.premovable.current;
+  return cur ? [{ orig: cur[0], dest: cur[1] }] : [];
+}
+
+/**
+ * Returns the index of the queued item that should be edited/replaced when the
+ * user re-drags the piece currently displayed on `key`.
+ *
+ * Priority:
+ * 1. If `key` is an origin of a queued item, that item is edited (the chain
+ *    continues from that stage's start, replacing the item and everything after).
+ * 2. Otherwise, if `key` is the destination of an item, the item that placed the
+ *    piece there is edited (this is the chess.com-style "drag the premoved piece
+ *    again to reroute it" gesture).
+ * 3. In single mode, a destination matches the single premove.
+ */
+export function premoveRerouteIndex(state: HeadlessState, key: cg.Key): number | undefined {
+  if (state.premovable.multiple) {
+    const queue = state.premovable.queue;
+    const byOrig = queue.findIndex(item => item.orig === key);
+    if (byOrig !== -1) return byOrig;
+    for (let i = queue.length - 1; i >= 0; i--) if (queue[i].dest === key) return i;
+    return undefined;
+  }
+  return state.premovable.current?.[1] === key && state.premovable.current?.[0] !== key ? 0 : undefined;
+}
+
+function applyItems(pieces: cg.Pieces, items: cg.Premove[]): cg.Pieces {
+  let result = pieces;
+  for (const item of items) result = applyMoveToPieces(result, item.orig, item.dest);
+  return result;
+}
+
+/**
+ * The board shown to the user while premoves are queued: the real board with
+ * every queued premove applied on top. When `showMovedPieces` is disabled this
+ * returns the real board (legacy highlight-only rendering).
+ *
+ * The real `state.pieces` is never mutated by this function; it is only a
+ * rendering/interaction overlay.
+ */
+export function visiblePieces(state: HeadlessState): cg.Pieces {
+  if (!state.premovable.showMovedPieces) return state.pieces;
+  const items = premoveItems(state);
+  if (!items.length) return state.pieces;
+  return applyItems(state.pieces, items);
+}
+
+/**
  * The pieces map that should be used to compute premove destinations for `orig`:
- * the real board with the queued premoves already applied on top. When premoving
- * is not in "multiple" (queue) mode, or the queue is empty, this is simply the
- * current board.
+ * the real board with the queued premoves already applied on top.
  *
  * When `orig` is an origin already used by an earlier queued item, re-queueing
  * from it replaces that item and everything queued after it, so the hypothetical
- * board only applies the items before that one.
+ * board only applies the items before that one. When `orig` is the destination
+ * of an item (the piece is being re-dragged to reroute that move), the board
+ * applies items through that item so the piece is visible on `orig`.
  */
 export function premovePieces(state: HeadlessState, orig?: cg.Key): cg.Pieces {
-  if (!state.premovable.multiple) return state.pieces;
-  const queue = state.premovable.queue;
-  const idx = orig === undefined ? -1 : queue.findIndex(item => item.orig === orig);
-  const effective = idx === -1 ? queue : queue.slice(0, idx);
-  let pieces = state.pieces;
-  for (const item of effective) pieces = applyMoveToPieces(pieces, item.orig, item.dest);
-  return pieces;
+  const items = premoveItems(state);
+  if (!items.length) return state.pieces;
+  if (orig === undefined) return applyItems(state.pieces, items);
+  const idx = premoveRerouteIndex(state, orig);
+  if (idx === undefined) return applyItems(state.pieces, items);
+  if (state.premovable.multiple) {
+    const byOrig = state.premovable.queue.findIndex(item => item.orig === orig);
+    if (byOrig !== -1) return applyItems(state.pieces, state.premovable.queue.slice(0, byOrig));
+    // Destination-based reroute: the piece is on `orig` after the item at `idx`
+    // has been applied, so include that item (and stop before later items).
+    return applyItems(state.pieces, state.premovable.queue.slice(0, idx + 1));
+  }
+  // Single mode reroute: the premove is already applied on the visible board.
+  return applyItems(state.pieces, items);
 }
 
 function premoveFromState(state: HeadlessState, pieces: cg.Pieces, key: cg.Key): cg.Key[] {

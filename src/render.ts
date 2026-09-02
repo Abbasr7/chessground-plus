@@ -1,5 +1,5 @@
 import { type AnimCurrent, type AnimFadings, type AnimVector, type AnimVectors } from './anim.js';
-import { whitePov } from './board.js';
+import { visiblePieces, whitePov } from './board.js';
 import { type DragCurrent } from './drag.js';
 import { type State } from './state.js';
 import type * as cg from './types.js';
@@ -20,14 +20,14 @@ export function render(s: State): void {
   const asWhite: boolean = whitePov(s),
     posToTranslate = posToTranslateFromBounds(s.dom.bounds()),
     boardEl: HTMLElement = s.dom.elements.board,
-    pieces: cg.Pieces = s.pieces,
+    pieces: cg.Pieces = visiblePieces(s),
     curAnim: AnimCurrent | undefined = s.animation.current,
     anims: AnimVectors = curAnim ? curAnim.plan.anims : new Map(),
     fadings: AnimFadings = curAnim ? curAnim.plan.fadings : new Map(),
     curDrag: DragCurrent | undefined = s.draggable.current,
     samePieces: Set<cg.Key> = new Set(),
     movedPieces: Map<PieceName, cg.PieceNode[]> = new Map(),
-    desiredSquares: cg.SquareClasses = computeSquareClasses(s),
+    desiredSquares: cg.SquareClasses = computeSquareClasses(s, pieces),
     availableSquares: Map<string, cg.SquareNode[]> = new Map(); // by class name
   let k: cg.Key,
     el: cg.PieceNode | cg.SquareNode | undefined,
@@ -224,7 +224,7 @@ const normalizeLastMoveStandardRookCastle = (s: State, k: cg.Key): cg.Key =>
     ? (((k > s.lastMove[0] ? 'g' : 'c') + k[1]) as cg.Key)
     : k;
 
-function computeSquareClasses(s: State): cg.SquareClasses {
+function computeSquareClasses(s: State, pieces: cg.Pieces = visiblePieces(s)): cg.SquareClasses {
   const squares: cg.SquareClasses = new Map();
   if (s.lastMove && s.highlight.lastMove)
     for (const [i, k] of s.lastMove.entries())
@@ -234,24 +234,26 @@ function computeSquareClasses(s: State): cg.SquareClasses {
     addSquare(squares, s.selected, 'selected');
     if (s.movable.showDests) {
       for (const k of s.movable.dests?.get(s.selected) ?? [])
-        addSquare(squares, k, 'move-dest' + (s.pieces.has(k) ? ' oc' : ''));
+        addSquare(squares, k, 'move-dest' + (pieces.has(k) ? ' oc' : ''));
       for (const k of s.premovable.customDests?.get(s.selected) ?? s.premovable.dests ?? [])
-        addSquare(squares, k, 'premove-dest' + (s.pieces.has(k) ? ' oc' : ''));
+        addSquare(squares, k, 'premove-dest' + (pieces.has(k) ? ' oc' : ''));
     }
   }
   if (s.premovable.multiple && s.premovable.queue.length) {
-    // Each queued premove highlights both its origin and destination squares,
-    // using an ordinal class so consumers can give earlier/later moves a
-    // distinct color ramp via CSS.
+    // Each queued premove highlights its origin (subtle) and destination
+    // (prominent chess.com-style) squares, using an ordinal class so consumers
+    // can give earlier/later moves a distinct color ramp via CSS.
     s.premovable.queue.forEach((item, i) => {
       const klass = `premove-queue-${Math.min(i + 1, 8)}`;
-      addSquare(squares, item.orig, klass);
-      addSquare(squares, item.dest, klass);
+      addSquare(squares, item.orig, klass + ' premove-origin');
+      addSquare(squares, item.dest, klass + ' premove-dest');
     });
   } else {
     const premove = s.premovable.current;
-    if (premove) for (const k of premove) addSquare(squares, k, 'current-premove');
-    else if (s.predroppable.current) addSquare(squares, s.predroppable.current.key, 'current-premove');
+    if (premove) {
+      for (const k of premove) addSquare(squares, k, 'current-premove');
+      addSquare(squares, premove[1], 'premove-dest');
+    } else if (s.predroppable.current) addSquare(squares, s.predroppable.current.key, 'current-premove');
   }
 
   const o = s.exploding;

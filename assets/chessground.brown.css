@@ -9,13 +9,21 @@ cg-board square.move-dest {
   background: radial-gradient(rgba(20, 85, 30, 0.5) 22%, #208530 0, rgba(0, 0, 0, 0.3) 0, rgba(0, 0, 0, 0) 0);
 }
 cg-board square.premove-dest {
-  background: radial-gradient(rgba(20, 30, 85, 0.5) 22%, #203085 0, rgba(0, 0, 0, 0.3) 0, rgba(0, 0, 0, 0) 0);
+  background: radial-gradient(
+    rgba(255, 105, 180, 0.35) 22%,
+    rgba(240, 60, 160, 0.65) 0,
+    rgba(0, 0, 0, 0.3) 0,
+    rgba(0, 0, 0, 0) 0
+  );
+}
+cg-board square.premove-origin {
+  background-color: rgba(88, 145, 255, 0.28);
 }
 cg-board square.oc.move-dest {
   background: radial-gradient(transparent 0%, transparent 80%, rgba(20, 85, 0, 0.3) 80%);
 }
 cg-board square.oc.premove-dest {
-  background: radial-gradient(transparent 0%, transparent 80%, rgba(20, 30, 85, 0.2) 80%);
+  background: radial-gradient(transparent 0%, transparent 80%, rgba(240, 60, 160, 0.35) 80%);
 }
 cg-board square.move-dest:hover,
 cg-board square.move-dest.hover {
@@ -23,7 +31,7 @@ cg-board square.move-dest.hover {
 }
 cg-board square.premove-dest:hover,
 cg-board square.premove-dest.hover {
-  background: rgba(20, 30, 85, 0.2);
+  background: rgba(240, 60, 160, 0.45);
 }
 cg-board square.last-move {
   background-color: rgba(155, 199, 0, 0.41);

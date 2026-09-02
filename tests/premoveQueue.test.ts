@@ -50,13 +50,45 @@ test('queue items can chain by continuing to move the same piece', () => {
 
   expect(board.userMove(state, 'b8', 'c6')).toBe(true);
   expect(state.premovable.queue).toEqual([{ orig: 'b8', dest: 'c6' }]);
-  // The second move starts from the knight's hypothetical destination.
+  // Ctrl-drag / append mode is how a new chain step is explicit; plain drag
+  // from a queued destination would reroute the existing move instead.
+  state.stats.ctrlKey = true;
   expect(board.userMove(state, 'c6', 'e5')).toBe(true);
   expect(state.premovable.queue).toEqual([
     { orig: 'b8', dest: 'c6' },
     { orig: 'c6', dest: 'e5' },
   ]);
   expect(state.premovable.current).toEqual(['b8', 'c6']);
+});
+
+test('plain re-drag from a queued destination reroutes that move', () => {
+  const pieces: cg.Pieces = new Map([
+    ['b8', { role: 'knight', color: 'black' }],
+    ['e8', { role: 'king', color: 'black' }],
+    ['e1', { role: 'king', color: 'white' }],
+  ]);
+  const state = makeState(pieces, 'white', 'black');
+  state.premovable.queue = [{ orig: 'b8', dest: 'c6' }];
+
+  expect(board.userMove(state, 'c6', 'e5')).toBe(true);
+  expect(state.premovable.queue).toEqual([{ orig: 'b8', dest: 'e5' }]);
+});
+
+test('single-premove drag from the displayed destination reroutes it', () => {
+  const pieces: cg.Pieces = new Map([
+    ['b8', { role: 'knight', color: 'black' }],
+    ['e8', { role: 'king', color: 'black' }],
+    ['e1', { role: 'king', color: 'white' }],
+  ]);
+  const state = defaults();
+  state.pieces = pieces;
+  state.turnColor = 'white';
+  state.movable.color = 'black';
+  state.premovable.multiple = false;
+  state.premovable.current = ['b8', 'c6'];
+
+  expect(board.userMove(state, 'c6', 'a5')).toBe(true);
+  expect(state.premovable.current).toEqual(['b8', 'a5']);
 });
 
 test('re-queueing an origin replaces that item and everything after it', () => {
@@ -70,7 +102,9 @@ test('re-queueing an origin replaces that item and everything after it', () => {
     { orig: 'b8', dest: 'c6' },
     { orig: 'c6', dest: 'e5' },
   ];
-  // Re-queueing from c6 (an existing origin) truncates from there and replaces it.
+  // Ctrl-drag from c6 treats it as an origin (stage start) and replaces that
+  // stage and everything after it.
+  state.stats.ctrlKey = true;
   expect(board.userMove(state, 'c6', 'a5')).toBe(true);
   expect(state.premovable.queue).toEqual([
     { orig: 'b8', dest: 'c6' },
@@ -92,6 +126,7 @@ test('queue respects maxQueueLength', () => {
     { orig: 'a7', dest: 'a6' },
   ];
   // The third move exceeds the cap and is ignored.
+  state.stats.ctrlKey = true;
   board.userMove(state, 'c6', 'e5');
   expect(state.premovable.queue.length).toBe(2);
 });

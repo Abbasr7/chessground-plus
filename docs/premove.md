@@ -83,6 +83,8 @@ premove actually happen" is your rules engine.
 | `customDests`                   | `cg.Dests`                        | —           | Supply your own premove destinations per origin, overriding the built-in mobility. |
 | `multiple`                      | `boolean`                         | `false`     | Enable the chess.com-style multi-premove queue.                                    |
 | `maxQueueLength`                | `number`                          | `5`         | Maximum number of queued premoves (only when `multiple` is `true`).                |
+| `showMovedPieces`               | `boolean`                         | `true`      | Render each premoved piece at its queued destination (chess.com-style).            |
+| `rerouteOnDrag`                 | `boolean`                         | `true`      | Re-dragging a premoved piece from its destination edits that queued move.          |
 | `additionalPremoveRequirements` | `cg.Mobility`                     | `_ => true` | Extra predicate that can veto a destination (`false` excludes it).                 |
 | `events.set`                    | `(orig, dest, metadata?) => void` | —           | Called after a premove is set / queued.                                            |
 | `events.unset`                  | `() => void`                      | —           | Called after the current premove is cleared, or the queue empties.                 |
@@ -125,14 +127,60 @@ if (!ground.playPremove()) {
 
 ---
 
+## Chess.com-style visual premoves
+
+With `premovable.showMovedPieces: true` (the default in this project), queued
+premoves are rendered as **real-looking pieces on the destination squares**, not
+just highlights:
+
+- The origin square stops showing the piece.
+- The destination square shows the piece and gets the `premove-dest` square class
+  (plus `premove-queue-N` and `premove-origin` classes in multi-premove mode).
+- `state.pieces` / `getFen()` are **not** mutated while the premove is only queued;
+  the overlay is a separate visible board (`visiblePieces()`).
+
+### Drag-to-reroute
+
+The user can re-drag the piece from its displayed premove destination to a new
+square. Plain drag **edits the queued move that put that piece there**:
+
+- Single mode: `e2→e4`, then drag the pawn from `e4` to `e5` → `e2→e5`.
+- Multi mode: `[e2→e4, g1→f3]`, then drag the knight from `f3` to `h2` →
+  `[e2→e4, g1→h2]`.
+- Re-dragging from a square that is the start of a later chain stage replaces that
+  stage and everything after it.
+- The same edit works with **click-click**: click the displayed premove piece,
+  then click its new destination.
+
+### Extending a chain of the same piece
+
+Because plain drag from a premoved destination means "reroute this move", a new
+chain step for the **same** piece is explicit: hold **Ctrl/Shift** while dragging
+(same as `setPremove` metadata `append: true`).
+
+- `e2→e4`, then Ctrl-drag the pawn from `e4` to `e5` →
+  `[e2→e4, e4→e5]`.
+
+### Undo / cancel
+
+- `cancelPremove()` clears the current (single) premove or pops the front item in
+  multi mode.
+- `cancelPremoveQueue()` clears the whole queue.
+- Dropping the drag outside the board or on the same square clears a single
+  premove; in multi mode unrelated clicks/drops never clear the queue.
+
+---
+
 ## Single-premove mode (default, `multiple: false`)
 
-This is the original chessground behavior and is **unchanged**.
+This is the original chessground state behavior, plus the chess.com-style visual
+overlay described above.
 
 - Only one premove can be queued at a time.
 - Setting a new premove **replaces** the old one.
 - When it becomes your turn, `playPremove()` plays that single move.
 - `current` (a `[orig, dest]` pair) reflects the stored premove.
+- The piece is rendered at `current[1]`; the real board (`state.pieces`) is unchanged.
 
 ```ts
 const ground = Chessground(el, {
@@ -192,8 +240,9 @@ earliest uses a muted red/orange. You can restyle these via the CSS variables
 | Behavior                      | Rule                                                                                                                                                                                             |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Hypothetical board**        | Item _N_ is legal-checked against the board after items `1..N-1` are applied.                                                                                                                    |
-| **Same piece in a chain**     | You can continue moving a piece that was itself the destination of an earlier queued move (select its hypothetical square, then the next square).                                                |
-| **Re-queueing an origin**     | Queueing a move whose origin already appears as an origin of an earlier item **replaces** that item and everything queued after it (later items were computed assuming the piece was elsewhere). |
+| **Same piece in a chain**     | Continue a chain with **Ctrl/Shift-drag** from the hypothetical square (plain drag would reroute the move that put the piece there).                                                             |
+| **Drag-to-reroute**           | Plain drag from a queued destination **edits that move** (and truncates the later chain).                                                                                                        |
+| **Re-queueing an origin**     | Ctrl/Shift-drag whose origin already appears as an origin of an earlier item **replaces** that item and everything queued after it (later items were computed assuming the piece was elsewhere). |
 | **Empty hypothetical origin** | You cannot start a drag/selection from a square that has no piece on the hypothetical board.                                                                                                     |
 | **Max length**                | The queue is capped at `maxQueueLength`; queueing beyond it is ignored.                                                                                                                          |
 | **Illegal front**             | If `playPremove()`'s front move is illegal after the opponent moves, the **whole queue** is cleared.                                                                                             |
@@ -231,6 +280,8 @@ interface PremovableState {
   multiple: boolean;
   maxQueueLength: number;
   queue: cg.Premove[]; // [{ orig: 'e2', dest: 'e4' }, ...] (multiple mode)
+  showMovedPieces: boolean; // chess.com-style visual overlay
+  rerouteOnDrag: boolean; // plain drag edits the queued move
   additionalPremoveRequirements: cg.Mobility;
   events: {
     set?: (orig, dest, meta?) => void;
@@ -314,6 +365,38 @@ premovable: {
 
 Chessground never decides whether a premove is legal in the rules sense — that is
 the host's job via `movable.dests`. The pieces on the real board are **never moved**
-while premoves are only queued; only square highlights change. The actual piece
-rendering reflects the true board until a queued move is played for real with
-`playPremove()`.
+while premoves are only queued. The **visual** board shows a chess.com-style
+overlay (`visiblePieces()`) with pieces at their queued destinations; the real
+`state.pieces` and `getFen()` only change when a queued move is played for real
+with `playPremove()`.
+
+## Integrating in `mechess-front`
+
+A typical React/mechess integration only needs the flags on `premovable`:
+
+```ts
+const ground = Chessground(boardEl, {
+  fen,
+  turnColor: opponentTurn ? 'black' : 'white',
+  movable: { color: userColor, dests: legalDests, showDests: true },
+  premovable: {
+    enabled: true,
+    multiple: true,
+    maxQueueLength: 5,
+    showMovedPieces: true, // chess.com-style moved premove pieces
+    rerouteOnDrag: true, // re-dragging from a premove destination edits it
+    events: {
+      set: (orig, dest) => notifyApp({ orig, dest, action: 'premove-set' }),
+      unset: () => notifyApp({ action: 'premove-unset' }),
+      queueSet: queue => notifyApp({ queue, action: 'premove-queue' }),
+      queueUnset: () => notifyApp({ action: 'premove-queue-unset' }),
+    },
+  },
+});
+
+function onOpponentMove(newFen: string, legalDests: Map<Key, string[]>) {
+  ground.set({ fen: newFen, turnColor: 'white', movable: { color: 'white', dests: legalDests } });
+  const played = ground.playPremove();
+  if (!played) clearYourUiState();
+}
+```

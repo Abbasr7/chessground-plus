@@ -70,6 +70,8 @@
           multiple: true, // <-- the opt-in flag
           maxQueueLength: 5,
           showDests: true,
+          showMovedPieces: true, // chess.com-style: pieces appear on queued destinations
+          rerouteOnDrag: true, // re-drag a premoved piece to reroute it
           events: {
             set: (orig, dest) => updatePremoveStatus(mpGround),
             unset: () => updatePremoveStatus(mpGround),
@@ -152,10 +154,11 @@
     <div class="board-wrap">
       <div class="label">1) Multi-premove queue</div>
       <div class="hint">
-        Black is to move, so you (white) can queue a <b>chain</b> of premoves. Click or drag a white piece to
-        a square to queue item 1, then another piece for item 2, etc. Each item is validated on a hypothetical
-        board (earlier queued moves already applied). The most recently queued move is the brightest
-        (yellow-green); earlier ones are muted red/orange.
+        Black is to move, so you (white) can queue a <b>chain</b> of premoves. Pieces visually move to their
+        queued destination (chess.com-style). Re-drag a premoved piece to <b>reroute</b> that queued move;
+        hold <b>Ctrl/Shift</b> while dragging from a queued destination to <b>add a new chain step</b> for the
+        same piece. Each item is validated on a hypothetical board; the most recently queued destination is
+        the brightest pink and the origin squares use the ordinal queue ramp.
       </div>
       <div class="chessground" id="board-premove"></div>
       <div>

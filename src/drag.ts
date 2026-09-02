@@ -27,7 +27,7 @@ export function start(s: State, e: cg.MouchEvent): void {
     position = util.eventPosition(e)!,
     orig = board.getKeyAtDomPos(position, board.whitePov(s), bounds);
   if (!orig) return;
-  const piece = s.pieces.get(orig);
+  const piece = board.pieceAt(s, orig);
   const previouslySelected = s.selected;
   if (
     !previouslySelected &&
@@ -47,10 +47,12 @@ export function start(s: State, e: cg.MouchEvent): void {
   const hadPremove = !!s.premovable.current;
   const hadPredrop = !!s.predroppable.current;
   s.stats.ctrlKey = e.ctrlKey;
+  s.stats.shiftKey = e.shiftKey;
+  let moved = false;
   if (s.selected && board.canMove(s, s.selected, orig)) {
-    anim(state => board.selectSquare(state, orig), s);
+    moved = anim(() => board.selectSquare(s, orig), s);
   } else {
-    board.selectSquare(s, orig);
+    moved = board.selectSquare(s, orig);
   }
   const stillSelected = s.selected === orig;
   const element = pieceElementByKey(s, orig);
@@ -77,7 +79,9 @@ export function start(s: State, e: cg.MouchEvent): void {
     }
     processDrag(s);
   } else {
-    if (hadPremove) board.unsetPremove(s);
+    // Don't clear a premove that was just re-routed by this mousedown (e.g.
+    // click-click: click the displayed premove piece, then click a new square).
+    if (!moved && hadPremove) board.unsetPremove(s);
     if (hadPredrop) board.unsetPredrop(s);
   }
   s.dom.redraw();
@@ -87,7 +91,7 @@ function pieceCloseTo(s: State, pos: cg.NumberPair): boolean {
   const asWhite = board.whitePov(s),
     bounds = s.dom.bounds(),
     radiusSq = Math.pow((s.touchIgnoreRadius * bounds.width) / 16, 2) * 2;
-  for (const key of s.pieces.keys()) {
+  for (const key of board.visiblePieces(s).keys()) {
     const center = util.computeSquareCenter(key, asWhite, bounds);
     if (util.distanceSq(center, pos) <= radiusSq) return true;
   }
@@ -122,8 +126,9 @@ function processDrag(s: State): void {
     if (!cur) return;
     // cancel animations while dragging
     if (s.animation.current?.plan.anims.has(cur.orig)) s.animation.current = undefined;
-    // if moving piece is gone, cancel
-    const origPiece = s.pieces.get(cur.orig);
+    // if moving piece is gone, cancel (use the visible board so a premoved
+    // piece at its queued destination remains draggable)
+    const origPiece = board.pieceAt(s, cur.orig);
     if (!origPiece || !util.samePiece(origPiece, cur.piece)) cancel(s);
     else {
       if (!cur.started && util.distanceSq(cur.pos, cur.origPos) >= Math.pow(s.draggable.distance, 2))
@@ -202,7 +207,6 @@ export function end(s: State, e: cg.MouchEvent): void {
     s.draggable.current = undefined;
     return;
   }
-  board.unsetPremove(s);
   board.unsetPredrop(s);
   // touchend has no position; so use the last touchmove position instead
   const eventPos = util.eventPosition(e) || cur.pos;
@@ -211,13 +215,20 @@ export function end(s: State, e: cg.MouchEvent): void {
     if (cur.newPiece) board.dropNewPiece(s, cur.orig, dest, cur.force);
     else {
       s.stats.ctrlKey = e.ctrlKey;
+      s.stats.shiftKey = e.shiftKey;
       if (board.userMove(s, cur.orig, dest)) s.stats.dragged = true;
+      else board.unsetPremove(s); // invalid drop cancels a single premove
     }
   } else if (cur.newPiece) {
     s.pieces.delete(cur.orig);
+    board.unsetPremove(s);
   } else if (s.draggable.deleteOnDropOff && !dest) {
     s.pieces.delete(cur.orig);
+    board.unsetPremove(s);
     board.callUserFunction(s.events.change);
+  } else if (!dest) {
+    // Dropping outside the board cancels a single premove (no-op in multi mode).
+    board.unsetPremove(s);
   }
   if ((cur.orig === cur.previouslySelected || cur.keyHasChanged) && (cur.orig === dest || !dest))
     board.unselect(s);
