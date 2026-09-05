@@ -49,10 +49,14 @@ export interface Config {
     castle?: boolean; // whether to allow king castle premoves
     dests?: cg.Key[]; // premove destinations for the current selection
     customDests?: cg.Dests; // use custom valid premoves. {"a2" ["a3" "a4"] "b1" ["a3" "c3"]}
+    multiple?: boolean; // allow a queue of several premoves (chess.com-style chain)
+    maxQueueLength?: number; // maximum number of premoves that can be queued
     additionalPremoveRequirements?: cg.Mobility;
     events?: {
       set?: (orig: cg.Key, dest: cg.Key, metadata?: cg.SetPremoveMetadata) => void; // called after the premove has been set
       unset?: () => void; // called after the premove has been unset
+      queueSet?: (queue: cg.Premove[]) => void; // called after the queue changes
+      queueUnset?: () => void; // called after the queue is emptied
     };
   };
   predroppable?: {
@@ -89,6 +93,7 @@ export interface Config {
     // Clicking an empty square or immovable piece will clear the drawing regardless, but when this property is true,
     // clicking on a (currently unselected) movable piece will also clear the drawing.
     eraseOnMovablePieceClick?: boolean;
+    knightMoveBend?: boolean; // draw knight-move arrows as a right-angle "L" instead of a straight line
     shapes?: DrawShape[];
     autoShapes?: DrawShape[];
     brushes?: DrawBrushes;
@@ -109,13 +114,46 @@ export function configure(state: HeadlessState, config: Config): void {
   if (config.movable?.dests) state.movable.dests = undefined;
   if (config.drawable?.autoShapes) state.drawable.autoShapes = [];
 
+  // remember premovable mode before merge so we can detect a switch and a new
+  // maxQueueLength: a host switching from single→queue (or vice versa), or
+  // shrinking the cap below the current queue length, must invalidate stale
+  // queue entries so callers don't act on impossible chains.
+  const prevMultiple = state.premovable.multiple;
+  const prevMax = state.premovable.maxQueueLength;
+
   deepMerge(state, config);
 
-  // if a fen was provided, replace the pieces
+  // Normalize maxQueueLength: non-positive values are treated as 1.
+  if (!Number.isFinite(state.premovable.maxQueueLength) || state.premovable.maxQueueLength < 1) {
+    state.premovable.maxQueueLength = 1;
+  }
+
+  // If a fen was provided, replace the pieces. The queued premoves are *not*
+  // cleared here: like the classic single premove, a chain is speculative by
+  // nature and the host re-validates it against `movable.dests` when it calls
+  // playPremove() after the board changes. Clearing on every FEN update would
+  // make multi-premove chains impossible in real online play, where the
+  // opponent's move arrives as a fresh FEN just before the user's turn. Hosts
+  // that replace the whole board (new game, analysis navigation, etc.) should
+  // cancel the queue explicitly via api.cancelPremoveQueue().
   if (config.fen) {
     state.pieces = fenRead(config.fen);
     state.drawable.shapes = config.drawable?.shapes || [];
   }
+
+  // Switching between single and queue mode also invalidates any saved premove.
+  if (config.premovable && config.premovable.multiple !== undefined && config.premovable.multiple !== prevMultiple) {
+    state.premovable.queue = [];
+    state.premovable.current = undefined;
+  }
+
+  // If the cap was lowered below the current queue length, truncate.
+  if (state.premovable.queue.length > state.premovable.maxQueueLength) {
+    state.premovable.queue.length = state.premovable.maxQueueLength;
+    const front = state.premovable.queue[0];
+    state.premovable.current = front ? [front.orig, front.dest] : undefined;
+  }
+  void prevMax;
 
   // apply config values that could be undefined yet meaningful
   if ('check' in config) setCheck(state, config.check || false);

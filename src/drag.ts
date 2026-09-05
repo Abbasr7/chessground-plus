@@ -1,6 +1,8 @@
 import { anim } from './anim.js';
 import * as board from './board.js';
 import { clear as drawClear } from './draw.js';
+import { fullPremovePieces } from './premove.js';
+import { stageAt } from './premovePieces.js';
 import { type State } from './state.js';
 import type * as cg from './types.js';
 import * as util from './util.js';
@@ -17,6 +19,7 @@ export interface DragCurrent {
   previouslySelected?: cg.Key;
   originTarget: EventTarget | null;
   keyHasChanged: boolean; // whether the drag has left the orig key
+  premoveStage?: number; // queue stage this drag originates from (virtual piece)
 }
 
 export function start(s: State, e: cg.MouchEvent): void {
@@ -27,7 +30,18 @@ export function start(s: State, e: cg.MouchEvent): void {
     position = util.eventPosition(e)!,
     orig = board.getKeyAtDomPos(position, board.whitePov(s), bounds);
   if (!orig) return;
-  const piece = s.pieces.get(orig);
+  // Prioritise the virtual (queued) board whenever `orig` is currently the
+  // destination of some queued premove, even when a real piece also still
+  // sits there — a capture, including a "defensive" premove onto one of the
+  // player's own pieces in anticipation of the opponent taking it first (the
+  // real board keeps that friendly piece in place until the premove actually
+  // executes). stageAt() is the source of truth for "is a queued piece
+  // actually shown here right now" — it returns undefined once the chain has
+  // moved further and superseded this square, so falling back to the
+  // authoritative board in that case is correct too (there's nothing virtual
+  // left to grab there).
+  const premoveStage = stageAt(s, orig);
+  const piece = premoveStage !== undefined ? fullPremovePieces(s).get(orig) : s.pieces.get(orig);
   const previouslySelected = s.selected;
   if (
     !previouslySelected &&
@@ -53,7 +67,12 @@ export function start(s: State, e: cg.MouchEvent): void {
     board.selectSquare(s, orig);
   }
   const stillSelected = s.selected === orig;
-  const element = pieceElementByKey(s, orig);
+  // Prefer a virtual piece element when dragging from a virtual stage so the
+  // user sees the moved piece under their finger. Falling back to the
+  // authoritative element keeps non-queued drags working.
+  const element = premoveStage !== undefined
+    ? virtualPieceElementByKey(s, orig) ?? pieceElementByKey(s, orig)
+    : pieceElementByKey(s, orig);
   if (piece && element && stillSelected && board.isDraggable(s, orig)) {
     s.draggable.current = {
       orig,
@@ -65,6 +84,7 @@ export function start(s: State, e: cg.MouchEvent): void {
       previouslySelected,
       originTarget: e.target,
       keyHasChanged: false,
+      premoveStage,
     };
     element.cgDragging = true;
     element.classList.add('dragging');
@@ -122,8 +142,11 @@ function processDrag(s: State): void {
     if (!cur) return;
     // cancel animations while dragging
     if (s.animation.current?.plan.anims.has(cur.orig)) s.animation.current = undefined;
-    // if moving piece is gone, cancel
-    const origPiece = s.pieces.get(cur.orig);
+    // if moving piece is gone, cancel. The originating piece may live on the
+    // virtual (queued) board for staged premoves; consult the virtual map
+    // before falling back to the authoritative board.
+    const virtual = fullPremovePieces(s);
+    const origPiece = virtual.get(cur.orig) ?? s.pieces.get(cur.orig);
     if (!origPiece || !util.samePiece(origPiece, cur.piece)) cancel(s);
     else {
       if (!cur.started && util.distanceSq(cur.pos, cur.origPos) >= Math.pow(s.draggable.distance, 2))
@@ -211,6 +234,10 @@ export function end(s: State, e: cg.MouchEvent): void {
     if (cur.newPiece) board.dropNewPiece(s, cur.orig, dest, cur.force);
     else {
       s.stats.ctrlKey = e.ctrlKey;
+      // A drag from a virtual (queued) piece layer entry lands here with
+      // cur.orig equal to that piece's current virtual square; userMove()
+      // treats that exactly like clicking the piece and clicking dest — it
+      // extends the chain by one more hop from wherever it's called with.
       if (board.userMove(s, cur.orig, dest)) s.stats.dragged = true;
     }
   } else if (cur.newPiece) {
@@ -251,6 +278,17 @@ function pieceElementByKey(s: State, key: cg.Key): cg.PieceNode | undefined {
     if ((el as cg.KeyedNode).cgKey === key && (el as cg.KeyedNode).tagName === 'PIECE')
       return el as cg.PieceNode;
     el = el.nextSibling;
+  }
+  return undefined;
+}
+
+function virtualPieceElementByKey(s: State, key: cg.Key): cg.PieceNode | undefined {
+  const layer = s.dom.elements.premovePieces;
+  if (!layer) return undefined;
+  let el = layer.firstChild as cg.PieceNode | null;
+  while (el) {
+    if ((el as cg.KeyedNode).cgKey === key) return el;
+    el = el.nextSibling as cg.PieceNode | null;
   }
   return undefined;
 }

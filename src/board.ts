@@ -1,4 +1,4 @@
-import { premove } from './premove.js';
+import { premove, premovePieces } from './premove.js';
 import { type HeadlessState } from './state.js';
 import type * as cg from './types.js';
 import {
@@ -29,7 +29,7 @@ export function toggleOrientation(state: HeadlessState): void {
 export function reset(state: HeadlessState): void {
   state.lastMove = undefined;
   unselect(state);
-  unsetPremove(state);
+  unsetPremoveQueue(state);
   unsetPredrop(state);
 }
 
@@ -53,19 +53,122 @@ export function setCheck(state: HeadlessState, color: cg.Color | boolean): void 
 
 function setPremove(state: HeadlessState, orig: cg.Key, dest: cg.Key, meta: cg.SetPremoveMetadata): void {
   unsetPredrop(state);
-  state.premovable.current = [orig, dest];
+  if (state.premovable.multiple) addToPremoveQueue(state, orig, dest);
+  else {
+    state.premovable.current = [orig, dest];
+    state.premovable.queue = [];
+  }
   callUserFunction(state.premovable.events.set, orig, dest, meta);
 }
 
+function addToPremoveQueue(state: HeadlessState, orig: cg.Key, dest: cg.Key, promotion?: cg.Role): void {
+  const queue = state.premovable.queue;
+  // Re-queueing a move whose origin is already used by an earlier queued
+  // item invalidates that item and everything queued after it (they were
+  // computed on a board where that piece was elsewhere), so truncate from
+  // there and start again.
+  //
+  // This single rule is also what makes chain-building behave identically
+  // whether the piece is continued by click or by drag: continuing a piece
+  // from its *current* virtual position always targets a square that has
+  // never itself been used as a queued origin yet, so `idx` below is -1 and
+  // the move is simply appended — extending the chain by one more hop,
+  // exactly like re-selecting the piece and clicking a new square does.
+  // (An earlier version special-cased drags from a virtual square by
+  // resolving back to that hop's "true" origin and *replacing* it instead
+  // of appending — which silently collapsed a 3-square chain into a single
+  // direct hop the moment a drag was used to extend it. Re-queueing from an
+  // origin that's already in the queue — including the piece's real,
+  // never-yet-moved square — still correctly truncates and replaces from
+  // there, via the branch below; that part needs no special-casing at all.)
+  const idx = queue.findIndex(item => item.orig === orig);
+  if (idx !== -1) {
+    queue.length = idx;
+    queue.push(promotion ? { orig, dest, promotion } : { orig, dest });
+  } else {
+    // Respect the maximum queue length (normalised to at least 1).
+    const cap = Math.max(1, state.premovable.maxQueueLength | 0);
+    if (queue.length >= cap) {
+      syncCurrentFromQueue(state);
+      return;
+    }
+    queue.push(promotion ? { orig, dest, promotion } : { orig, dest });
+  }
+  syncCurrentFromQueue(state);
+  emitQueueSet(state);
+}
+
+function syncCurrentFromQueue(state: HeadlessState): void {
+  const front = state.premovable.queue[0];
+  state.premovable.current = front ? [front.orig, front.dest] : undefined;
+}
+
+// Emit queueSet with an immutable shallow copy so React-style consumers can't
+// observe internal array mutation.
+function emitQueueSet(state: HeadlessState): void {
+  const ev = state.premovable.events;
+  if (ev.queueSet) setTimeout(() => ev.queueSet!(state.premovable.queue.slice()), 1);
+}
+
+function emitQueueUnset(state: HeadlessState): void {
+  const ev = state.premovable.events;
+  if (ev.unset) setTimeout(() => ev.unset!(), 1);
+  if (ev.queueUnset) setTimeout(() => ev.queueUnset!(), 1);
+}
+
+// Remove the first queued premove (operate on the front of the queue).
+export function cancelPremoveFront(state: HeadlessState): void {
+  if (!state.premovable.multiple) {
+    unsetPremove(state);
+    return;
+  }
+  if (!state.premovable.queue.length) return;
+  state.premovable.queue.shift();
+  syncCurrentFromQueue(state);
+  if (state.premovable.queue.length) emitQueueSet(state);
+  else emitQueueUnset(state);
+}
+
+// Remove the most recently queued premove.
+export function popLastPremove(state: HeadlessState): void {
+  if (!state.premovable.multiple) {
+    unsetPremove(state);
+    return;
+  }
+  if (!state.premovable.queue.length) return;
+  state.premovable.queue.pop();
+  syncCurrentFromQueue(state);
+  if (state.premovable.queue.length) emitQueueSet(state);
+  else emitQueueUnset(state);
+}
+
+// Clear the entire premove queue (or the single current premove in single mode).
+export function unsetPremoveQueue(state: HeadlessState): void {
+  if (state.premovable.multiple) {
+    if (!state.premovable.queue.length && !state.premovable.current) return;
+    state.premovable.queue = [];
+    state.premovable.current = undefined;
+    emitQueueUnset(state);
+  } else {
+    unsetPremove(state);
+  }
+}
+
 export function unsetPremove(state: HeadlessState): void {
+  // In multiple mode, interaction cleanup (e.g. ending a drag) must not wipe the
+  // whole queue — only the single-premove path clears anything here.
+  if (state.premovable.multiple) {
+    syncCurrentFromQueue(state);
+    return;
+  }
   if (state.premovable.current) {
     state.premovable.current = undefined;
-    callUserFunction(state.premovable.events.unset);
+    if (state.premovable.events.unset) setTimeout(() => state.premovable.events.unset!(), 1);
   }
 }
 
 function setPredrop(state: HeadlessState, role: cg.Role, key: cg.Key): void {
-  unsetPremove(state);
+  unsetPremoveQueue(state);
   state.predroppable.current = { role, key };
   callUserFunction(state.predroppable.events.set, role, key);
 }
@@ -149,7 +252,13 @@ function baseUserMove(state: HeadlessState, orig: cg.Key, dest: cg.Key): cg.Piec
   return result;
 }
 
-export function userMove(state: HeadlessState, orig: cg.Key, dest: cg.Key): boolean {
+export function userMove(
+  state: HeadlessState,
+  orig: cg.Key,
+  dest: cg.Key,
+  opts: { promotion?: cg.Role } = {},
+): boolean {
+  const promotion = opts.promotion;
   if (canMove(state, orig, dest)) {
     const result = baseUserMove(state, orig, dest);
     if (result) {
@@ -160,14 +269,14 @@ export function userMove(state: HeadlessState, orig: cg.Key, dest: cg.Key): bool
         ctrlKey: state.stats.ctrlKey,
         holdTime,
       };
+      if (promotion) metadata.promotion = promotion;
       if (result !== true) metadata.captured = result;
       callUserFunction(state.movable.events.after, orig, dest, metadata);
       return true;
     }
   } else if (canPremove(state, orig, dest)) {
-    setPremove(state, orig, dest, {
-      ctrlKey: state.stats.ctrlKey,
-    });
+    if (state.premovable.multiple) addToPremoveQueue(state, orig, dest, promotion);
+    else setPremove(state, orig, dest, { ctrlKey: state.stats.ctrlKey });
     unselect(state);
     return true;
   }
@@ -255,7 +364,10 @@ function canDrop(state: HeadlessState, orig: cg.Key, dest: cg.Key): boolean {
 }
 
 function isPremovable(state: HeadlessState, orig: cg.Key): boolean {
-  const piece = state.pieces.get(orig);
+  // When queuing premoves, each subsequent move "sees" the board with the
+  // earlier queued moves already applied, so selection must check the
+  // hypothetical piece board too.
+  const piece = premovePieces(state, orig).get(orig);
   return (
     !!piece &&
     state.premovable.enabled &&
@@ -283,7 +395,19 @@ function canPredrop(state: HeadlessState, orig: cg.Key, dest: cg.Key): boolean {
 }
 
 export function isDraggable(state: HeadlessState, orig: cg.Key): boolean {
-  const piece = state.pieces.get(orig);
+  // In multiple (queue) mode, prefer the hypothetical (queue-applied) board
+  // over the real one: if `orig` is currently the destination of a queued
+  // premove, the queued piece is what's actually shown there and what a
+  // drag should pick up — even when a real piece also still occupies that
+  // square. That includes a capture, and specifically a "defensive" premove
+  // onto one of the player's own pieces in anticipation of the opponent
+  // taking it first, where the real board keeps the friendly piece in place
+  // right up until the premove actually executes. Checking the real board
+  // first (as this used to) would grab that stale friendly piece instead of
+  // the queued attacker, making the attacker impossible to premove further.
+  const piece = state.premovable.multiple
+    ? (premovePieces(state, orig).get(orig) ?? state.pieces.get(orig))
+    : state.pieces.get(orig);
   return (
     !!piece &&
     state.draggable.enabled &&
@@ -293,6 +417,36 @@ export function isDraggable(state: HeadlessState, orig: cg.Key): boolean {
 }
 
 export function playPremove(state: HeadlessState): boolean {
+  // Multiple (queue) mode: attempt to play the front premove for real. If it is
+  // legal, pop it off the front and keep the rest of the chain queued for the
+  // next turn. If it has been invalidated by the opponent's move, clear the
+  // entire queue (a broken chain cannot skip ahead to item #2).
+  if (state.premovable.multiple) {
+    const front = state.premovable.queue[0];
+    if (!front) return false;
+    const { orig, dest } = front;
+    let success = false;
+    if (canMove(state, orig, dest)) {
+      const result = baseUserMove(state, orig, dest);
+      if (result) {
+        const metadata: cg.MoveMetadata = { premove: true };
+        if (result !== true) metadata.captured = result;
+        callUserFunction(state.movable.events.after, orig, dest, metadata);
+        success = true;
+      }
+    }
+    if (success) {
+      state.premovable.queue.shift();
+      syncCurrentFromQueue(state);
+      if (state.premovable.queue.length) emitQueueSet(state);
+      else emitQueueUnset(state);
+    } else {
+      unsetPremoveQueue(state);
+    }
+    return success;
+  }
+
+  // Single-premove mode (existing behavior).
   const move = state.premovable.current;
   if (!move) return false;
   const orig = move[0],
@@ -333,7 +487,7 @@ export function playPredrop(state: HeadlessState, validate: (drop: cg.Drop) => b
 }
 
 export function cancelMove(state: HeadlessState): void {
-  unsetPremove(state);
+  unsetPremoveQueue(state);
   unsetPredrop(state);
   unselect(state);
 }

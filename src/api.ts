@@ -38,8 +38,14 @@ export interface Api {
   // play the current premove, if any; returns true if premove was played
   playPremove(): boolean;
 
-  // cancel the current premove, if any
+  // cancel the current (front-of-queue) premove, if any
   cancelPremove(): void;
+
+  // cancel the whole premove queue, if any
+  cancelPremoveQueue(): void;
+
+  // remove the last item from the premove queue, if any
+  popLastPremove(): void;
 
   // play the current predrop, if any; returns true if premove was played
   playPredrop(validate: (drop: cg.Drop) => boolean): boolean;
@@ -117,6 +123,16 @@ export function start(state: State, redrawAll: cg.Redraw): Api {
     },
 
     playPremove(): boolean {
+      // In queue (multiple) mode, only the front premove can be played, and only
+      // when there's actually something in the queue. The internal `current` may
+      // be stale during config transitions, so we gate on the queue length
+      // rather than `current` here.
+      if (state.premovable.multiple) {
+        if (!state.premovable.queue.length) return false;
+        if (anim(board.playPremove, state)) return true;
+        state.dom.redraw();
+        return false;
+      }
       if (state.premovable.current) {
         if (anim(board.playPremove, state)) return true;
         // if the premove couldn't be played, redraw to clear it up
@@ -135,7 +151,18 @@ export function start(state: State, redrawAll: cg.Redraw): Api {
     },
 
     cancelPremove(): void {
-      render(board.unsetPremove, state);
+      render(
+        state => (state.premovable.multiple ? board.cancelPremoveFront(state) : board.unsetPremove(state)),
+        state,
+      );
+    },
+
+    cancelPremoveQueue(): void {
+      render(board.unsetPremoveQueue, state);
+    },
+
+    popLastPremove(): void {
+      render(board.popLastPremove, state);
     },
 
     cancelPredrop(): void {
