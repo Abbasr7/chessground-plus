@@ -1,4 +1,4 @@
-import { premove, premovePieces } from './premove.js';
+import { premove, premoveCutIndex, premovePieces } from './premove.js';
 import { type HeadlessState } from './state.js';
 import type * as cg from './types.js';
 import {
@@ -63,27 +63,22 @@ function setPremove(state: HeadlessState, orig: cg.Key, dest: cg.Key, meta: cg.S
 
 function addToPremoveQueue(state: HeadlessState, orig: cg.Key, dest: cg.Key, promotion?: cg.Role): void {
   const queue = state.premovable.queue;
-  // Re-queueing a move whose origin is already used by an earlier queued
-  // item invalidates that item and everything queued after it (they were
-  // computed on a board where that piece was elsewhere), so truncate from
-  // there and start again.
+  // Re-queueing a move from a square whose *current* occupant (on the
+  // hypothetical board) left it in an earlier queued item invalidates that
+  // item and everything queued after it (they were computed on a board where
+  // that piece was elsewhere), so truncate from there and start again.
+  // Continuing a piece from the square it was last queued *onto* instead
+  // extends the chain by one more hop, whether by click or by drag.
   //
-  // This single rule is also what makes chain-building behave identically
-  // whether the piece is continued by click or by drag: continuing a piece
-  // from its *current* virtual position always targets a square that has
-  // never itself been used as a queued origin yet, so `idx` below is -1 and
-  // the move is simply appended — extending the chain by one more hop,
-  // exactly like re-selecting the piece and clicking a new square does.
-  // (An earlier version special-cased drags from a virtual square by
-  // resolving back to that hop's "true" origin and *replacing* it instead
-  // of appending — which silently collapsed a 3-square chain into a single
-  // direct hop the moment a drag was used to extend it. Re-queueing from an
-  // origin that's already in the queue — including the piece's real,
-  // never-yet-moved square — still correctly truncates and replaces from
-  // there, via the branch below; that part needs no special-casing at all.)
-  const idx = queue.findIndex(item => item.orig === orig);
-  if (idx !== -1) {
-    queue.length = idx;
+  // This must use premoveCutIndex() — the same rule premovePieces() uses to
+  // validate the move — rather than the first queued item whose `orig` is
+  // this square. A square can be left and later re-occupied by a different
+  // piece (…Nh4, …Nf3+, …Qh4, …Qxh2): the first-match rule truncated back to
+  // the knight's hop, dropping …Nf3+ and …Qh4 and replaying the move with the
+  // knight instead of the queen.
+  const cut = premoveCutIndex(state, orig);
+  if (cut < queue.length) {
+    queue.length = cut;
     queue.push(promotion ? { orig, dest, promotion } : { orig, dest });
   } else {
     // Respect the maximum queue length (normalised to at least 1).

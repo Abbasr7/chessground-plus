@@ -1,5 +1,5 @@
 import { whitePov } from './board.js';
-import { applyMoveToPieces } from './premove.js';
+import { applyMoveToPieces, computeVirtualBoard } from './premove.js';
 import { type State } from './state.js';
 import type * as cg from './types.js';
 import { createEl, key2pos, posToTranslate as posToTranslateFromBounds, translate } from './util.js';
@@ -33,6 +33,13 @@ type VirtualStage = {
 // king, and a capture — including a capture of the player's own piece —
 // must hide whatever was really sitting on the destination, not just draw
 // the mover on top of it.
+//
+// Change is detected by object identity, not by comparing role/colour:
+// applyMoveToPieces() carries every untouched piece over as the same object,
+// so identity is exact. A value comparison would miss a piece landing on a
+// square that held an identical piece — e.g. a defensive Ra1xa2 onto the
+// player's own rook — leaving that stage with no virtual node and its origin
+// the only visible change.
 function diffPieces(before: cg.Pieces, after: cg.Pieces): { placements: Placement[]; hidden: cg.Key[] } {
   const placements: Placement[] = [];
   const hidden: cg.Key[] = [];
@@ -40,8 +47,7 @@ function diffPieces(before: cg.Pieces, after: cg.Pieces): { placements: Placemen
   for (const key of keys) {
     const b = before.get(key);
     const a = after.get(key);
-    const same = !!a && !!b && a.color === b.color && a.role === b.role && a.promoted === b.promoted;
-    if (same) continue;
+    if (a === b) continue;
     if (b) hidden.push(key);
     if (a) placements.push({ key, piece: a });
   }
@@ -67,8 +73,11 @@ function computeStages(state: State): VirtualStage[] {
     live = next;
   }
   // A placement is superseded — and must not be drawn — when a later,
-  // successfully-computed stage continues the move from that exact square
-  // (the same piece keeps advancing further down the chain). This is
+  // successfully-computed stage changes that exact square again: either the
+  // same piece keeps advancing further down the chain, or another piece
+  // lands there afterwards (a square left by …Nh4-f3 and re-occupied by
+  // …Qh4, or a later capture onto it). Either way that later stage lists the
+  // square in its `hidden` set, since it had a piece there before. This is
   // resolved per *placement*, not per stage, and only against `raw` (the
   // stages actually validated above, never the untouched tail of `queue`):
   // a castling move's rook placement and its king placement can have
@@ -78,7 +87,7 @@ function computeStages(state: State): VirtualStage[] {
   // because its `orig` happens to match that square's key.
   return raw.map((stage, i) => ({
     ...stage,
-    placements: stage.placements.filter(p => !raw.slice(i + 1).some(later => later.orig === p.key)),
+    placements: stage.placements.filter(p => !raw.slice(i + 1).some(later => later.hidden.includes(p.key))),
   }));
 }
 
@@ -232,21 +241,10 @@ export function stageAt(state: State, key: cg.Key): number | undefined {
   if (!state.premovable.multiple) return undefined;
   const queue = state.premovable.queue;
   if (!queue.length) return undefined;
-  // Find the stage whose `dest` is `key` and that stage is still valid (its
-  // origin exists on the resulting board). The destination is the only square
-  // a single premove can place a piece on, so this is unambiguous.
-  for (let i = 0; i < queue.length; i++) {
-    if (queue[i].dest === key) {
-      // Validate the stage: apply the queue up to and including it, ensure
-      // the piece lands on `key`.
-      let live: cg.Pieces = state.pieces;
-      for (let j = 0; j <= i; j++) {
-        const item = queue[j];
-        if (!live.has(item.orig)) return undefined;
-        live = applyMoveToPieces(live, item.orig, item.dest, { promotion: item.promotion });
-      }
-      if (live.get(key)) return i;
-    }
-  }
-  return undefined;
+  // The stage that owns `key` is the *last* valid stage that placed a piece
+  // there and wasn't later moved away — not the first queued item with that
+  // dest: a square can be visited by several pieces along the chain
+  // (…Nh4, …Nf3+, …Qh4), and only the latest one is actually shown there.
+  const stage = computeVirtualBoard(state).placedBy.get(key);
+  return stage !== undefined && queue[stage].dest === key ? stage : undefined;
 }
