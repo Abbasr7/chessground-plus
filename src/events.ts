@@ -75,6 +75,12 @@ function unbindable(
 const startDragOrDraw =
   (s: State): MouchBind =>
   e => {
+    // The cached board rect is only invalidated by scroll / window resize /
+    // size changes. A layout shift that moves the board without resizing it
+    // (e.g. a header or player bar appearing above it after the page loads)
+    // would leave it stale and map every tap to the wrong square, so
+    // re-measure at the start of each interaction.
+    s.dom.bounds.clear();
     if (s.draggable.current) drag.cancel(s);
     else if (s.drawable.current) draw.cancel(s);
     else if (e.shiftKey || isRightButton(e)) {

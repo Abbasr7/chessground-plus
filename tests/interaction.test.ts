@@ -171,3 +171,26 @@ test('multi mode highlights every square a queued premove touches', () => {
   // Four distinct squares, each touched by exactly one queued move.
   for (const key of ['e2', 'e4', 'g1', 'f3'] as const) expect(hasClass(key, 'premove-hl-1')).toBe(true);
 });
+
+test('a board that moved without resizing is re-measured on pointer down', () => {
+  const ground = makeBoard({
+    fen: BOARD_FEN,
+    turnColor: 'white',
+    movable: { color: 'white', dests: new Map([['e2', ['e3', 'e4']]]) },
+    trustAllEvents: true,
+  });
+  click('g1'); // primes the cached bounds
+  click('g1'); // deselect
+  // Layout shifts the board down by 100px; no scroll/resize event fires.
+  const moved = { ...rect, top: 100, bottom: 500 };
+  const orig = HTMLElement.prototype.getBoundingClientRect;
+  HTMLElement.prototype.getBoundingClientRect = () => moved as DOMRect;
+  try {
+    const [x, y] = centerOf('e2');
+    document.querySelector('cg-board')!.dispatchEvent(mdoc('mousedown', x, y + 100));
+    document.dispatchEvent(mdoc('mouseup', x, y + 100));
+    expect(ground.state.selected).toBe('e2');
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = orig;
+  }
+});
