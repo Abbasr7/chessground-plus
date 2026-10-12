@@ -2,17 +2,18 @@
   box-sizing: content-box;
   position: relative;
   display: block;
-  /* Color ramp for a chess.com-style premove queue. Earlier queued moves use a
-     muted red/orange, the most recently queued move uses a brighter yellow-green.
-     Consumers can override these variables to restyle without touching JS. */
-  --premove-queue-color-1: rgba(150, 30, 25, 0.5);
-  --premove-queue-color-2: rgba(180, 65, 25, 0.5);
-  --premove-queue-color-3: rgba(200, 115, 25, 0.5);
-  --premove-queue-color-4: rgba(165, 175, 40, 0.5);
-  --premove-queue-color-5: rgba(140, 195, 50, 0.5);
-  --premove-queue-color-6: rgba(120, 200, 60, 0.5);
-  --premove-queue-color-7: rgba(110, 205, 70, 0.5);
-  --premove-queue-color-8: rgba(100, 210, 80, 0.5);
+  /* Colour of a chess.com-style premove highlight. --premove-alpha-N is the
+     opacity of a square touched by N queued premoves: the more premoves share
+     a square the darker it gets, in steps small enough that a long chain on
+     one square (a knight hopping g1-f3-g1-f3…) does not turn solid red.
+     Consumers can override these variables to restyle. */
+  --premove-rgb: 214 50 48;
+  --premove-alpha-1: 0.36;
+  --premove-alpha-2: 0.5;
+  --premove-alpha-3: 0.61;
+  --premove-alpha-4: 0.69;
+  --premove-alpha-5: 0.75;
+  --premove-alpha-6: 0.8;
 }
 
 cg-container {
@@ -246,30 +247,27 @@ piece.fading {
   transform: translateX(700%);
 }
 
-/** Chess.com-style premove queue highlights (see --premove-queue-color-N vars above) */
-cg-board square.premove-queue-1 {
-  background-color: var(--premove-queue-color-1);
+/** Chess.com-style premove highlights (see --premove-rgb / --premove-alpha-N above).
+    premove-hl-N means N queued premoves touch the square. The compound
+    selector (and :not(.selected)) keeps the red above theme rules such as
+    last-move regardless of stylesheet order, without hiding the selection. */
+cg-board square.premove-hl.premove-hl-1:not(.selected) {
+  background-color: rgb(var(--premove-rgb) / var(--premove-alpha-1));
 }
-cg-board square.premove-queue-2 {
-  background-color: var(--premove-queue-color-2);
+cg-board square.premove-hl.premove-hl-2:not(.selected) {
+  background-color: rgb(var(--premove-rgb) / var(--premove-alpha-2));
 }
-cg-board square.premove-queue-3 {
-  background-color: var(--premove-queue-color-3);
+cg-board square.premove-hl.premove-hl-3:not(.selected) {
+  background-color: rgb(var(--premove-rgb) / var(--premove-alpha-3));
 }
-cg-board square.premove-queue-4 {
-  background-color: var(--premove-queue-color-4);
+cg-board square.premove-hl.premove-hl-4:not(.selected) {
+  background-color: rgb(var(--premove-rgb) / var(--premove-alpha-4));
 }
-cg-board square.premove-queue-5 {
-  background-color: var(--premove-queue-color-5);
+cg-board square.premove-hl.premove-hl-5:not(.selected) {
+  background-color: rgb(var(--premove-rgb) / var(--premove-alpha-5));
 }
-cg-board square.premove-queue-6 {
-  background-color: var(--premove-queue-color-6);
-}
-cg-board square.premove-queue-7 {
-  background-color: var(--premove-queue-color-7);
-}
-cg-board square.premove-queue-8 {
-  background-color: var(--premove-queue-color-8);
+cg-board square.premove-hl.premove-hl-6:not(.selected) {
+  background-color: rgb(var(--premove-rgb) / var(--premove-alpha-6));
 }
 
 /* Virtual premove pieces layer.

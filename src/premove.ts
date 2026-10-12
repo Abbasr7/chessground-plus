@@ -214,6 +214,88 @@ export function computeVirtualBoard(state: HeadlessState): VirtualBoard {
   return { pieces, placedBy, castlingRooks, validStages };
 }
 
+export interface RealizedPremoves {
+  /** how many items at the front of the queue the real board has caught up with */
+  count: number;
+  /**
+   * What the user was looking at before the board changed: `before` with the
+   * realized moves already applied. Animating from here to the new board makes
+   * only genuinely new changes (the opponent's move) slide; a premove the
+   * virtual layer was already showing does not move a second time.
+   */
+  baseline: cg.Pieces;
+}
+
+// Castling premoved by dragging the king onto its own rook (e1→h1) ends with
+// the king on g1/c1 and the rook on f1/d1, exactly like e1→g1/c1. Standard
+// start square only: applyMoveToPieces() recognises castling as a two-file king move.
+function castleByRookDest(pieces: cg.Pieces, orig: cg.Key, dest: cg.Key): cg.Key {
+  const king = pieces.get(orig),
+    rook = pieces.get(dest);
+  if (
+    orig[0] === 'e' &&
+    orig[1] === dest[1] &&
+    king?.role === 'king' &&
+    rook?.role === 'rook' &&
+    rook.color === king.color
+  )
+    return ((dest[0] > orig[0] ? 'g' : 'c') + orig[1]) as cg.Key;
+  return dest;
+}
+
+const sameOrBothEmpty = (a: cg.Piece | undefined, b: cg.Piece | undefined): boolean =>
+  a === b || (!!a && !!b && util.samePiece(a, b));
+
+/**
+ * Finds the queue items that the real board has caught up with.
+ *
+ * While a premove is queued the real board is untouched and only the virtual
+ * layer shows the moved piece. When the host later plays the move for real and
+ * syncs the new position, the front item is "realized": every square it
+ * touches on `before` (origin, destination, a castling rook, an en-passant
+ * victim) now holds exactly what applyMoveToPieces() predicts. That is a
+ * transition, not just a coincidence, because the origin held the mover on
+ * `before` and is empty on `after`. A promotion only needs the right colour on
+ * the destination, since the host may pick any piece.
+ *
+ * Items are checked in order against the board with the earlier ones applied,
+ * and the scan stops at the first one that is not realized, so a broken chain
+ * never retires anything behind it.
+ */
+export function realizedPremoves(
+  queue: readonly cg.Premove[],
+  before: cg.Pieces,
+  after: cg.Pieces,
+): RealizedPremoves {
+  let visual = before;
+  let count = 0;
+  for (const item of queue) {
+    const mover = visual.get(item.orig);
+    // A played move always vacates its origin, so an occupied origin on the new
+    // board settles it without computing the move.
+    if (!mover || after.has(item.orig)) break;
+    const dest = castleByRookDest(visual, item.orig, item.dest);
+    const applied = applyMoveToPieces(visual, item.orig, dest, { promotion: item.promotion });
+    const next = new Map(applied);
+    let realized = true;
+    for (const key of new Set([...visual.keys(), ...applied.keys()])) {
+      const was = visual.get(key),
+        want = applied.get(key);
+      if (was === want) continue;
+      const actual = after.get(key);
+      if (key === dest && mover.role === 'pawn' && want && want.role !== 'pawn') {
+        if (!actual || actual.color !== want.color) realized = false;
+        else next.set(key, actual);
+      } else if (!sameOrBothEmpty(actual, want)) realized = false;
+      if (!realized) break;
+    }
+    if (!realized) break;
+    visual = next;
+    count++;
+  }
+  return { count, baseline: visual };
+}
+
 /** مهره‌ای که «روی تخته‌ی فرضی» در این خونه است (منبع حقیقت برای انتخاب/درگ) */
 export function virtualPieceAt(state: HeadlessState, key: cg.Key): cg.Piece | undefined {
   return computeVirtualBoard(state).pieces.get(key);

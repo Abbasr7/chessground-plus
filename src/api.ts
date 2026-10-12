@@ -129,9 +129,11 @@ export function start(state: State, redrawAll: cg.Redraw): Api {
       // rather than `current` here.
       if (state.premovable.multiple) {
         if (!state.premovable.queue.length) return false;
-        if (anim(board.playPremove, state)) return true;
-        state.dom.redraw();
-        return false;
+        // Not animated: the virtual layer has been showing the piece on its
+        // destination all along, so sliding it there again would replay a move
+        // the user has already seen. render() redraws, so a rejected front
+        // (queue cleared) is also reflected immediately.
+        return render(board.playPremove, state);
       }
       if (state.premovable.current) {
         if (anim(board.playPremove, state)) return true;

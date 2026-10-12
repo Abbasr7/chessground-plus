@@ -181,11 +181,19 @@ const ground = Chessground(el, {
 });
 ```
 
-If the user queues `e2→e4` then `g1→f3`, the board shows both moves highlighted
-simultaneously with an **ordinal color ramp** (`premove-queue-1`, `premove-queue-2`,
-…). The most recently queued move uses the brightest (yellow-green) tone and the
-earliest uses a muted red/orange. You can restyle these via the CSS variables
-`--premove-queue-color-1` … `--premove-queue-color-8` without touching JS.
+If the user queues `e2→e4` then `g1→f3`, the board shows the moved pieces on their
+destinations (a virtual layer; the real board is untouched) and highlights the
+origin and destination of every queued move in red, chess.com style.
+
+Each queued move lays **one translucent red layer** on its origin and on its
+destination, so a square touched by several queued moves (for example `c4` in
+`Bf1→c4`, `Bc4→b5`) is darker than a square touched by one. The square gets the
+classes `premove-hl premove-hl-N`, where `N` is the number of queued moves
+touching it (capped at 6). The layer count is derived from the queue each time:
+when the front move is played, only the squares of that move lose a layer, and a
+shared square drops back to plain red. Restyle with the CSS variables
+`--premove-rgb` (space-separated rgb triplet) and `--premove-alpha-1` … `--premove-alpha-6`
+(the opacity for a square touched by N queued moves) without touching JS.
 
 ### Queue rules and edge cases
 
@@ -212,6 +220,22 @@ earliest uses a muted red/orange. You can restyle these via the CSS variables
 ground.playPremove();
 // After the opponent moves again, ground.playPremove() will attempt the next queued item.
 ```
+
+### Playing the move yourself (no `playPremove()`)
+
+A host that runs its own rules engine can skip `playPremove()`: validate
+`state.premovable.queue[0]`, play it in your engine, and sync the resulting
+position with `ground.set({ fen })`. **Do not call `cancelPremove()` after
+playing it.** When `set({ fen })` lands, chessground notices that the real board
+has caught up with the front item (its origin is emptied and its destination,
+castling rook or en-passant victim now match what the move predicts), removes it
+from the queue in the same step, and fires `queueSet` / `queueUnset`. The piece
+the virtual layer was already showing is handed over to the real one without a
+second animation, while the opponent's move in the same update still slides.
+Call `cancelPremoveQueue()` only when the front move is illegal.
+
+The same applies to `playPremove()`, which never animates the move for the same
+reason.
 
 ---
 
@@ -314,6 +338,7 @@ premovable: {
 
 Chessground never decides whether a premove is legal in the rules sense — that is
 the host's job via `movable.dests`. The pieces on the real board are **never moved**
-while premoves are only queued; only square highlights change. The actual piece
-rendering reflects the true board until a queued move is played for real with
-`playPremove()`.
+while premoves are only queued (`state.pieces` and `getFen()` stay authoritative);
+the moved pieces are drawn by a separate virtual layer, with the real origin piece
+hidden underneath. A queued move becomes real when it is played with
+`playPremove()` or when a synced position shows it played (see above).

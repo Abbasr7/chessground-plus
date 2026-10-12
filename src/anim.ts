@@ -1,3 +1,4 @@
+import * as board from './board.js';
 import { type State } from './state.js';
 import type * as cg from './types.js';
 import * as util from './util.js';
@@ -27,9 +28,31 @@ export const anim = <A>(mutation: Mutation<A>, state: State): A =>
   state.animation.enabled ? animate(mutation, state) : render(mutation, state);
 
 export function render<A>(mutation: Mutation<A>, state: State): A {
+  const before = hasQueuedPremoves(state) ? new Map(state.pieces) : undefined;
   const result = mutation(state);
+  if (before) retireRealized(state, before);
   state.dom.redraw();
   return result;
+}
+
+const hasQueuedPremoves = (state: State): boolean => state.premovable.multiple && state.premovable.queue.length > 0;
+
+// Retires the queued premoves that the mutation just made real and returns the
+// board the animation should start from (see board.retireRealizedPremoves).
+function retireRealized(state: State, before: cg.Pieces): cg.Pieces {
+  const baseline = board.retireRealizedPremoves(state, before);
+  if (baseline !== before) {
+    // The queue indices shifted, so a drag that started on a virtual piece no
+    // longer points at the stage it grabbed. Drop it instead of letting it
+    // drive a node that is about to be reconciled away.
+    const drag = state.draggable.current;
+    if (drag?.premoveStage !== undefined) {
+      state.draggable.current = undefined;
+      if (state.dom.elements.ghost) util.setVisible(state.dom.elements.ghost, false);
+      board.unselect(state);
+    }
+  }
+  return baseline;
 }
 
 interface AnimPiece {
@@ -119,7 +142,7 @@ function animate<A>(mutation: Mutation<A>, state: State): A {
   const prevPieces: cg.Pieces = new Map(state.pieces);
 
   const result = mutation(state);
-  const plan = computePlan(prevPieces, state);
+  const plan = computePlan(retireRealized(state, prevPieces), state);
   if (plan.anims.size || plan.fadings.size) {
     const alreadyRunning = state.animation.current && state.animation.current.start;
     state.animation.current = {

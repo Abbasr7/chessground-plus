@@ -19,6 +19,10 @@ import * as util from "./util.js";
 
 type PieceName = string; // `$color $role`
 
+// Beyond this many overlapping premoves a square can't get any darker; keep in
+// step with the premove-hl-N rules in chessground.base.css.
+const MAX_PREMOVE_LAYERS = 6;
+
 // ported from https://github.com/lichess-org/lichobile/blob/master/src/chessground/render.ts
 // in case of bugs, blame @veloce
 export function render(s: State): void {
@@ -265,26 +269,22 @@ function computeSquareClasses(s: State): cg.SquareClasses {
     }
   }
   if (s.premovable.multiple && s.premovable.queue.length) {
-    // Each queued premove highlights both its origin and destination squares,
-    // using an ordinal class so consumers can give earlier/later moves a
-    // distinct color ramp via CSS.
-    type Role = "start" | "via" | "end";
-    const marks = new Map<cg.Key, { n: number; role: Role }>();
-    s.premovable.queue.forEach((item, i) => {
-      const n = Math.min(i + 1, 8);
-      const prev = marks.get(item.orig);
-      // اگر قبلاً مهره‌ای از صف به این خونه رسیده و حالا از آن می‌رود → waypoint
-      // (شماره‌ی همان ورود را نگه می‌داریم)؛ وگرنه شروعِ یک زنجیره است
-      marks.set(
-        item.orig,
-        prev && prev.role !== "start"
-          ? { n: prev.n, role: "via" }
-          : { n, role: "start" },
+    // Every queued premove lays one translucent red layer on its origin and on
+    // its destination (chess.com style). A square that several queued moves
+    // touch gets one layer per move, so it reads darker; the layer count is
+    // derived from the queue each time, so when the front move is played only
+    // the squares of that move lose a layer and a shared square drops back to
+    // the plain red of the moves still waiting.
+    const layers = new Map<cg.Key, number>();
+    for (const item of s.premovable.queue)
+      for (const k of [item.orig, item.dest])
+        layers.set(k, (layers.get(k) ?? 0) + 1);
+    for (const [k, n] of layers)
+      addSquare(
+        squares,
+        k,
+        `premove-hl premove-hl-${Math.min(n, MAX_PREMOVE_LAYERS)}`,
       );
-      marks.set(item.dest, { n, role: "end" });
-    });
-    for (const [k, m] of marks)
-      addSquare(squares, k, `premove-queue-${m.n} premove-queue-${m.role}`);
   } else {
     const premove = s.premovable.current;
     if (premove)

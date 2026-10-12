@@ -1,4 +1,4 @@
-import { premove, premoveCutIndex, premovePieces } from './premove.js';
+import { premove, premoveCutIndex, premovePieces, realizedPremoves } from './premove.js';
 import { type HeadlessState } from './state.js';
 import type * as cg from './types.js';
 import {
@@ -111,6 +111,36 @@ function emitQueueUnset(state: HeadlessState): void {
   if (ev.queueUnset) setTimeout(() => ev.queueUnset!(), 1);
 }
 
+// Shared tail of every operation that removes items from the queue: keep
+// `current` in step with the new front and tell the host what is left.
+function afterQueueShrink(state: HeadlessState): void {
+  syncCurrentFromQueue(state);
+  if (state.premovable.queue.length) emitQueueSet(state);
+  else emitQueueUnset(state);
+}
+
+// Retire the premoves the real board has caught up with.
+//
+// A queued premove is only ever drawn by the virtual pieces layer; the real
+// board changes when the host plays the move and syncs the new position. The
+// moment that sync lands, the front of the queue has become real, so it must
+// leave the queue in the same step — otherwise its virtual piece would vanish
+// first, uncovering the real piece still on the origin square, which would
+// then slide to the destination the user already saw it on.
+//
+// `before` is the real board prior to the change. Returns the board the user
+// was looking at (see RealizedPremoves.baseline), or `before` itself when
+// nothing was retired.
+export function retireRealizedPremoves(state: HeadlessState, before: cg.Pieces): cg.Pieces {
+  const queue = state.premovable.queue;
+  if (!state.premovable.multiple || !queue.length) return before;
+  const { count, baseline } = realizedPremoves(queue, before, state.pieces);
+  if (!count) return before;
+  queue.splice(0, count);
+  afterQueueShrink(state);
+  return baseline;
+}
+
 // Remove the first queued premove (operate on the front of the queue).
 export function cancelPremoveFront(state: HeadlessState): void {
   if (!state.premovable.multiple) {
@@ -119,9 +149,7 @@ export function cancelPremoveFront(state: HeadlessState): void {
   }
   if (!state.premovable.queue.length) return;
   state.premovable.queue.shift();
-  syncCurrentFromQueue(state);
-  if (state.premovable.queue.length) emitQueueSet(state);
-  else emitQueueUnset(state);
+  afterQueueShrink(state);
 }
 
 // Remove the most recently queued premove.
@@ -132,9 +160,7 @@ export function popLastPremove(state: HeadlessState): void {
   }
   if (!state.premovable.queue.length) return;
   state.premovable.queue.pop();
-  syncCurrentFromQueue(state);
-  if (state.premovable.queue.length) emitQueueSet(state);
-  else emitQueueUnset(state);
+  afterQueueShrink(state);
 }
 
 // Clear the entire premove queue (or the single current premove in single mode).
@@ -432,9 +458,7 @@ export function playPremove(state: HeadlessState): boolean {
     }
     if (success) {
       state.premovable.queue.shift();
-      syncCurrentFromQueue(state);
-      if (state.premovable.queue.length) emitQueueSet(state);
-      else emitQueueUnset(state);
+      afterQueueShrink(state);
     } else {
       unsetPremoveQueue(state);
     }

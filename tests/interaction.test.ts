@@ -150,7 +150,7 @@ test('multi mode: clicking empty/unrelated squares never clears the queue', () =
   expect(ground.state.premovable.queue).toEqual([{ orig: 'e2', dest: 'e4' }]);
 });
 
-test('multi mode renders ordinal queue highlight classes on the squares', () => {
+test('multi mode highlights every square a queued premove touches', () => {
   const ground = makeBoard({
     fen: BOARD_FEN,
     turnColor: 'black',
@@ -165,9 +165,9 @@ test('multi mode renders ordinal queue highlight classes on the squares', () => 
   ground.state.dom.redrawNow();
   const squares = Array.from(ground.state.dom.elements.board.querySelectorAll('square'));
   const hasClass = (key: cg.Key, cls: string) =>
-    squares.some(sq => (sq as any).cgKey === key && sq.classList.contains(cls));
-  expect(hasClass('e2', 'premove-queue-1')).toBe(true);
-  expect(hasClass('e4', 'premove-queue-1')).toBe(true);
-  expect(hasClass('g1', 'premove-queue-2')).toBe(true);
-  expect(hasClass('f3', 'premove-queue-2')).toBe(true);
+    squares.some(
+      sq => (sq as any).cgKey === key && (sq as HTMLElement).style.display !== 'none' && sq.classList.contains(cls),
+    );
+  // Four distinct squares, each touched by exactly one queued move.
+  for (const key of ['e2', 'e4', 'g1', 'f3'] as const) expect(hasClass(key, 'premove-hl-1')).toBe(true);
 });
