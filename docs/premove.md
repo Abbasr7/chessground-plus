@@ -221,6 +221,15 @@ ground.playPremove();
 // After the opponent moves again, ground.playPremove() will attempt the next queued item.
 ```
 
+### Selecting a piece while waiting for the opponent
+
+A piece selected during the opponent's turn stays selected when their move
+arrives, so the user can click its destination right away. For that, hand
+`movable.dests` over for **all** your pieces as soon as it is your turn (not
+only for the piece that was clicked): the selection then switches from premove
+destinations to the real ones. The selection is dropped if the opponent's move
+captured the selected piece or emptied its square.
+
 ### Playing the move yourself (no `playPremove()`)
 
 A host that runs its own rules engine can skip `playPremove()`: validate

@@ -362,3 +362,79 @@ describe('a piece hopping back and forth between two squares', () => {
     expect(ground.state.premovable.queue.length).toBe(4);
   });
 });
+
+describe('a selection made while waiting for the opponent', () => {
+  // The user picks up a piece during the opponent's turn so they can click its
+  // destination the moment the move lands. A premove selection must survive the
+  // opponent's move and turn into a normal move selection.
+  const selectedBoard = () => {
+    const ground = makeBoard({
+      fen: '4k3/8/8/8/8/8/8/4KB2 w - - 0 1',
+      turnColor: 'black',
+      movable: { color: 'white', dests: new Map() },
+      premovable: { enabled: true, multiple: true },
+      trustAllEvents: true,
+    });
+    click('f1');
+    expect(ground.state.selected).toBe('f1');
+    return ground;
+  };
+  const visibleClasses = (ground: ReturnType<typeof makeBoard>, key: cg.Key) => {
+    ground.state.dom.redrawNow();
+    const sq = Array.from(ground.state.dom.elements.board.querySelectorAll('square')).filter(
+      s => (s as any).cgKey === key && (s as HTMLElement).style.display !== 'none',
+    );
+    return sq.flatMap(s => Array.from(s.classList));
+  };
+
+  test('survives the opponent move, shows the real destinations, and moves on the next click', async () => {
+    const after = vi.fn();
+    const ground = selectedBoard();
+    ground.set({ movable: { events: { after } } });
+
+    // ...Kd8, then the host hands over the legal moves of the new position.
+    ground.set({
+      fen: '3k4/8/8/8/8/8/8/4KB2 w - - 0 1',
+      turnColor: 'white',
+      movable: { color: 'white', dests: new Map([['f1', ['c4', 'b5']]]) },
+    });
+
+    expect(ground.state.selected).toBe('f1');
+    expect(visibleClasses(ground, 'c4')).toContain('move-dest');
+    expect(visibleClasses(ground, 'f1')).toContain('selected');
+
+    click('c4');
+    await flush();
+    expect(ground.getFen()).toBe('3k4/8/8/8/2B5/8/8/4K3');
+    expect(after).toHaveBeenCalledWith('f1', 'c4', expect.objectContaining({ premove: false }));
+  });
+
+  test('is dropped when the opponent captures the selected piece', () => {
+    const ground = selectedBoard();
+
+    ground.set({
+      fen: '4k3/8/8/8/8/8/8/4Kb2 w - - 0 1', // ...Bxf1 style: a black piece now sits on f1
+      turnColor: 'white',
+      movable: { color: 'white', dests: new Map() },
+    });
+
+    expect(ground.state.selected).toBeUndefined();
+    expect(visibleClasses(ground, 'f1')).not.toContain('selected');
+  });
+
+  test('is dropped when the selected piece disappears', () => {
+    const ground = selectedBoard();
+
+    ground.set({ fen: '4k3/8/8/8/8/8/8/4K3 w - - 0 1' });
+
+    expect(ground.state.selected).toBeUndefined();
+  });
+
+  test('is kept when the selected piece is still there but nothing else matters', () => {
+    const ground = selectedBoard();
+
+    ground.set({ fen: '3k4/8/8/8/8/8/8/4KB2 w - - 0 1' });
+
+    expect(ground.state.selected).toBe('f1');
+  });
+});

@@ -354,6 +354,18 @@ export function setSelected(state: HeadlessState, key: cg.Key): void {
   // calculate chess premoves if custom premoves are not passed
 }
 
+// Whether the selected square still holds a piece the user may move or
+// premove. A selection made while waiting for the opponent survives their
+// move (so the user can click the destination right away), but not if the move
+// captured the selected piece or otherwise emptied/changed the square. In queue
+// mode the piece may be a queued premove's piece on its hypothetical square.
+export function selectionStillValid(state: HeadlessState): boolean {
+  const key = state.selected;
+  if (!key) return false;
+  const piece = premovePieces(state, key).get(key);
+  return !!piece && (state.movable.color === 'both' || state.movable.color === piece.color);
+}
+
 export function unselect(state: HeadlessState): void {
   state.selected = undefined;
   state.premovable.dests = undefined;

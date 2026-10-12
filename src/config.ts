@@ -1,4 +1,4 @@
-import { setCheck, setSelected } from './board.js';
+import { selectionStillValid, setCheck, setSelected, unselect } from './board.js';
 import { type DrawBrushes, type DrawShape } from './draw.js';
 import { read as fenRead } from './fen.js';
 import { type HeadlessState } from './state.js';
@@ -164,7 +164,10 @@ export function configure(state: HeadlessState, config: Config): void {
   else if (config.lastMove) state.lastMove = config.lastMove;
 
   // fix move/premove dests
-  if (state.selected) setSelected(state, state.selected);
+  if (state.selected) {
+    if (selectionStillValid(state)) setSelected(state, state.selected);
+    else unselect(state);
+  }
 
   applyAnimation(state, config);
 
